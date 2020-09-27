@@ -10,11 +10,6 @@
 #define WIFI_GPIO 13 // GPIO 13 == D7
 #define LED_GPIO 12 // GPIO 12 == D6
 
-// Use @myidbot to find out the chat ID of an individual or a group
-// Also note that you need to click "start" on a bot before it can
-// message you
-#define CHAT_ID "1235398233"
-
 // Initialize Telegram BOT
 WiFiClientSecure client;
 UniversalTelegramBot bot(BOTtoken, client);
