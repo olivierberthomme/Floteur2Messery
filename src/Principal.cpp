@@ -9,6 +9,7 @@
 #define CONTACT_GPIO 5 // GPIO 5 == D1
 #define WIFI_GPIO 13 // GPIO 13 == D7
 #define LED_GPIO 12 // GPIO 12 == D6
+#define MAX_FAILING_WIFI 10 // 10 x 1mn == 10mn
 
 // Initialize Telegram BOT
 WiFiClientSecure client;
@@ -17,6 +18,7 @@ UniversalTelegramBot bot(BOTtoken, client);
 // Wifi variables
 const char* ssid = WIFI_SSID;
 const char* password = WIFI_PASS;
+int failingWifi = 0;
 // IP to ping
 IPAddress ip (8,8,8,8);
 
@@ -32,30 +34,40 @@ void lecture_contact(){
 
   if(digitalRead(CONTACT_GPIO) == 0){
     digitalWrite(LED_GPIO,LOW);
-    bot.sendMessage(CHAT_ID, "Le floteur ne fait plus contact.", "");
+    bot.sendMessage(CHAT_ID, "Pompes OK.", "");
   }else{
     digitalWrite(LED_GPIO,HIGH);
-    bot.sendMessage(CHAT_ID, "Le floteur fait contact !", "");
+    bot.sendMessage(CHAT_ID, "Problème pompes !", "");
   }
 }
 
 void lecture_wifi(){
   int avg_ms = 2000;
-  Ping.ping(ip, 2);
+  Ping.ping(ip, 9);
   avg_ms = Ping.averageTime();
 
   Serial.print("ping:");
   Serial.print(avg_ms);
   Serial.println("ms");
-  // digitalWrite(15,LOW);
 
-  if(avg_ms < 300){
+  if(avg_ms < 2000){
     digitalWrite(WIFI_GPIO,HIGH);
+    failingWifi=0;
   }else{
     digitalWrite(WIFI_GPIO,LOW);
-    Serial.println("Connection Failed! Rebooting...");
+    Serial.println("Connection Failed! Reconnecting...");
+    WiFi.reconnect();
     delay(2000);
-    ESP.restart();
+    while (WiFi.waitForConnectResult() != WL_CONNECTED) {
+      Serial.println("Connection failed again...");
+      failingWifi=failingWifi+1;
+      if (failingWifi>MAX_FAILING_WIFI){
+        ESP.restart();
+      }
+    }
+    Serial.println("Connection fails but reconnected :)");
+    // bot.sendMessage(CHAT_ID, "Connection fails but reconnected :)", "");
+    digitalWrite(WIFI_GPIO,HIGH);
   }
 }
 
@@ -63,8 +75,8 @@ void lecture_wifi(){
 Scheduler runner;
 
 // List tasks
-Task verifie_contact(1000, TASK_FOREVER, &lecture_contact, &runner, true);  // Vérifie le contact
-Task verifie_wifi(1000, TASK_FOREVER, &lecture_wifi, &runner, true);  // Vérifie le wifi
+Task verifie_contact(4*3600*1000, TASK_FOREVER, &lecture_contact, &runner, true);  // Vérifie le contact
+Task verifie_wifi(60*1000, TASK_FOREVER, &lecture_wifi, &runner, true);  // Vérifie le wifi
 
 void setup() {
   // Region WiFi
@@ -80,6 +92,7 @@ void setup() {
 
   WiFi.mode(WIFI_STA);
   WiFi.hostname(HOSTNAME);
+  wifi_fpm_set_sleep_type(LIGHT_SLEEP_T);
   WiFi.begin(ssid, password);
   delay(2000);
   while (WiFi.waitForConnectResult() != WL_CONNECTED) {
@@ -90,6 +103,7 @@ void setup() {
   Serial.println("Ready");
   Serial.print("IP address:");
   Serial.println(WiFi.localIP().toString());
+  digitalWrite(WIFI_GPIO,HIGH);
   // Region WiFi end
 
   // Region Timer
@@ -106,4 +120,6 @@ void setup() {
 void loop() {
   // Timer
   runner.execute();
+
+  delay(50);
 }
