@@ -4,12 +4,15 @@
 #include <TaskScheduler.h>
 #include <secrets.h>
 #include <UniversalTelegramBot.h>
+#include <WiFiUdp.h>
+#include <NTPClient.h>
 
 #define HOSTNAME "FloteurDeMessery"
 #define CONTACT_GPIO 5 // GPIO 5 == D1
 #define WIFI_GPIO 13 // GPIO 13 == D7
 #define LED_GPIO 12 // GPIO 12 == D6
 #define MAX_FAILING_WIFI 10 // 10 x 1mn == 10mn
+int previous_gpio_state = 0; // Previous state of CONTACT_GPIO
 
 // Initialize Telegram BOT
 WiFiClientSecure client;
@@ -22,52 +25,85 @@ int failingWifi = 0;
 // IP to ping
 IPAddress ip (8,8,8,8);
 
+// NTP param
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "europe.pool.ntp.org", 3600, TASK_MINUTE*60);
+
 // Scheduler variables
 #define _TASK_SLEEP_ON_IDLE_RUN
 
 void lecture_contact(){
+  int current_gpio_state = digitalRead(CONTACT_GPIO);
+
   // Read GPIO and print it on Serial port
   Serial.print("State of GPIO");
   Serial.print(CONTACT_GPIO);
   Serial.print(": ");
-  Serial.println(digitalRead(CONTACT_GPIO));
+  Serial.println(current_gpio_state);
 
-  if(digitalRead(CONTACT_GPIO) == 0){
+  if(current_gpio_state == 0){
     digitalWrite(LED_GPIO,LOW);
-    bot.sendMessage(CHAT_ID, "Pompes OK.", "");
   }else{
     digitalWrite(LED_GPIO,HIGH);
-    bot.sendMessage(CHAT_ID, "Problème pompes !", "");
   }
+  
+  if(current_gpio_state != previous_gpio_state){
+    if(current_gpio_state == 0){
+      Serial.println("Pompes a nouveau OK");
+      bot.sendMessage(CHAT_ID, "Pompes à nouveau OK", "");
+    }else{
+      Serial.println("Probleme pompes detecte !");
+      bot.sendMessage(CHAT_ID, "Problème pompes détecté !", "");
+    }
+  }
+
+  // Send status during daytime
+  if(timeClient.getHours() >= 8 && timeClient.getHours() <= 20){
+    // When all good, send OK message at 10am
+    if(current_gpio_state == 0 && timeClient.getHours() >= 10 && timeClient.getHours() < 14){
+      bot.sendMessage(CHAT_ID, "Pompes OK", "");
+    }
+
+    // When something wrong, send message
+    if(current_gpio_state == 1){
+      bot.sendMessage(CHAT_ID, "Problème pompes !", "");
+    }
+  }
+  previous_gpio_state = current_gpio_state;
 }
 
 void lecture_wifi(){
-  int avg_ms = 2000;
-  Ping.ping(ip, 9);
-  avg_ms = Ping.averageTime();
+  // wait 1 minute before WiFi check
+  if(millis()>TASK_MINUTE){
+    int avg_ms = 2000;
+    Ping.ping(ip, 9);
+    avg_ms = Ping.averageTime();
 
-  Serial.print("ping:");
-  Serial.print(avg_ms);
-  Serial.println("ms");
+    Serial.print(timeClient.getFormattedTime());
+    Serial.print("-");
+    Serial.print("ping:");
+    Serial.print(avg_ms);
+    Serial.println("ms");
 
-  if(avg_ms < 2000){
-    digitalWrite(WIFI_GPIO,HIGH);
-    failingWifi=0;
-  }else{
-    digitalWrite(WIFI_GPIO,LOW);
-    Serial.println("Connection Failed! Reconnecting...");
-    WiFi.reconnect();
-    delay(2000);
-    while (WiFi.waitForConnectResult() != WL_CONNECTED) {
-      Serial.println("Connection failed again...");
-      failingWifi=failingWifi+1;
-      if (failingWifi>MAX_FAILING_WIFI){
-        ESP.restart();
+    if(avg_ms < 2000){
+      digitalWrite(WIFI_GPIO,HIGH);
+      failingWifi=0;
+    }else{
+      digitalWrite(WIFI_GPIO,LOW);
+      Serial.println("Connection Failed! Reconnecting...");
+      WiFi.reconnect();
+      delay(2000);
+      while (WiFi.waitForConnectResult() != WL_CONNECTED) {
+        Serial.println("Connection failed again...");
+        failingWifi=failingWifi+1;
+        if (failingWifi>MAX_FAILING_WIFI){
+          ESP.restart();
+        }
       }
+      Serial.println("Connection fails but reconnected :)");
+      // bot.sendMessage(CHAT_ID, "Connection fails but reconnected :)", "");
+      digitalWrite(WIFI_GPIO,HIGH);
     }
-    Serial.println("Connection fails but reconnected :)");
-    // bot.sendMessage(CHAT_ID, "Connection fails but reconnected :)", "");
-    digitalWrite(WIFI_GPIO,HIGH);
   }
 }
 
@@ -75,8 +111,8 @@ void lecture_wifi(){
 Scheduler runner;
 
 // List tasks
-Task verifie_contact(4*3600*1000, TASK_FOREVER, &lecture_contact, &runner, true);  // Vérifie le contact
-Task verifie_wifi(60*1000, TASK_FOREVER, &lecture_wifi, &runner, true);  // Vérifie le wifi
+Task verifie_contact(TASK_MINUTE*60*3, TASK_FOREVER, &lecture_contact, &runner, true);  // Vérifie le contact
+Task verifie_wifi(TASK_MINUTE, TASK_FOREVER, &lecture_wifi, &runner, true);  // Vérifie le wifi
 
 void setup() {
   // Region WiFi
@@ -108,6 +144,7 @@ void setup() {
 
   // Region Timer
   runner.startNow();  // set point-in-time for scheduling start
+  timeClient.begin(); // start NTP client
   // Region Timer end
 
   // Region TelegramBot
@@ -120,6 +157,8 @@ void setup() {
 void loop() {
   // Timer
   runner.execute();
+  // NTP update
+  timeClient.update();
 
   delay(50);
 }
