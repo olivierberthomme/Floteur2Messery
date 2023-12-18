@@ -6,6 +6,7 @@
 #include <UniversalTelegramBot.h>
 #include <WiFiUdp.h>
 #include <NTPClient.h>
+#include <TimeLib.h>
 
 #define HOSTNAME "FloteurDeMessery"
 #define CONTACT_GPIO 5 // GPIO 5 == D1
@@ -31,6 +32,10 @@ NTPClient timeClient(ntpUDP, "europe.pool.ntp.org", 3600, TASK_MINUTE*60);
 
 // Scheduler variables
 #define _TASK_SLEEP_ON_IDLE_RUN
+
+time_t getArduinoDueTime(){
+  return timeClient.getEpochTime();
+}
 
 void lecture_contact(){
   int current_gpio_state = digitalRead(CONTACT_GPIO);
@@ -62,6 +67,9 @@ void lecture_contact(){
     // When all good, send OK message at 10am
     if(current_gpio_state == 0 && timeClient.getHours() >= 10 && timeClient.getHours() < 14){
       bot.sendMessage(CHAT_ID, "Pompes OK", "");
+      if(month() == 4 && day() == 3){
+        bot.sendMessage(CHAT_ID, ",.-~*´¨¯¨`*·~-.-(  Bon anniversaire !  )-,.-~*´¨¯¨`*·~-.", "");
+      }
     }
 
     // When something wrong, send message
@@ -152,6 +160,8 @@ void setup() {
   bot.sendMessage(CHAT_ID, "ESP8266 connecté", "");
   bot.sendMessage(CHAT_ID, WiFi.localIP().toString(), "");
   // Region TelegramBot end
+
+  setSyncProvider(getArduinoDueTime);
 }
 
 void loop() {
